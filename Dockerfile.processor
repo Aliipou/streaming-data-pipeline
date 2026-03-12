@@ -1,0 +1,11 @@
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/processor ./cmd/processor
+
+FROM gcr.io/distroless/static-debian12
+COPY --from=builder /bin/processor /processor
+COPY --from=builder /src/internal/store/migrations /internal/store/migrations
+ENTRYPOINT ["/processor"]

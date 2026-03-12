@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Streaming Data Pipeline</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; }
+    header { background: #1e293b; padding: 1rem 2rem; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 1.25rem; font-weight: 600; color: #34d399; }
+    .ws-status { font-size: 0.8rem; }
+    .ws-live { color: #34d399; } .ws-off { color: #f87171; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .stat-card { background: #1e293b; border-radius: 10px; padding: 1.25rem; border: 1px solid #334155; }
+    .stat-card .label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card .value { font-size: 2rem; font-weight: 700; margin-top: 0.25rem; }
+    .green { color: #34d399; } .yellow { color: #fbbf24; } .red { color: #f87171; } .blue { color: #60a5fa; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+    .section { background: #1e293b; border-radius: 10px; padding: 1.5rem; border: 1px solid #334155; margin-bottom: 1.5rem; }
+    .section h2 { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.5rem 0.75rem; color: #64748b; font-weight: 500; border-bottom: 1px solid #334155; }
+    td { padding: 0.625rem 0.75rem; border-bottom: 1px solid #1a2540; }
+    tr:hover td { background: #263447; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+    .badge-critical { background: #3f1515; color: #f87171; }
+    .badge-high { background: #431407; color: #fb923c; }
+    .badge-medium { background: #78350f; color: #fbbf24; }
+    .badge-low { background: #1c3a5f; color: #60a5fa; }
+    .chart-wrap { background: #0f172a; border-radius: 6px; padding: 0.75rem; }
+    .chart-wrap svg { width: 100%; height: 120px; }
+    @media(max-width: 768px) { .grid2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Streaming Data Pipeline</h1>
+  <span class="ws-status ws-off" id="ws-status">● disconnected</span>
+</header>
+
+<div class="container">
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Events Ingested</div><div class="value green" id="stat-ingested">0</div></div>
+    <div class="stat-card"><div class="label">Events/sec</div><div class="value blue" id="stat-eps">0.0</div></div>
+    <div class="stat-card"><div class="label">Active Sensors</div><div class="value green" id="stat-sensors">0</div></div>
+    <div class="stat-card"><div class="label">Anomalies</div><div class="value red" id="stat-anomalies">0</div></div>
+    <div class="stat-card"><div class="label">Processor Lag</div><div class="value yellow" id="stat-lag">0ms</div></div>
+  </div>
+
+  <!-- EPS Chart + Windows -->
+  <div class="grid2">
+    <div class="section">
+      <h2>📊 Events / Minute</h2>
+      <div class="chart-wrap">
+        <svg id="eps-chart" viewBox="0 0 400 120" preserveAspectRatio="none">
+          <polyline id="eps-line" points="" fill="none" stroke="#34d399" stroke-width="2"/>
+        </svg>
+      </div>
+    </div>
+    <div class="section">
+      <h2>🪟 Window Aggregations</h2>
+      <table>
+        <thead><tr><th>Type</th><th>Location</th><th>Avg</th><th>Min</th><th>Max</th><th>P99</th></tr></thead>
+        <tbody id="windows-body"><tr><td colspan="6" style="color:#64748b;text-align:center">Waiting for data...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Anomalies -->
+  <div class="section">
+    <h2>⚠️ Recent Anomalies</h2>
+    <table>
+      <thead><tr><th>Sensor</th><th>Type</th><th>Value</th><th>Expected</th><th>Z-Score</th><th>Severity</th><th>Time</th></tr></thead>
+      <tbody id="anomalies-body"><tr><td colspan="7" style="color:#64748b;text-align:center">No anomalies detected</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Events -->
+  <div class="section">
+    <h2>📡 Recent Events</h2>
+    <table>
+      <thead><tr><th>Sensor</th><th>Type</th><th>Location</th><th>Value</th><th>Unit</th><th>Time</th></tr></thead>
+      <tbody id="events-body"><tr><td colspan="6" style="color:#64748b;text-align:center">Waiting for events...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let ws, epsHistory = [];
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('ws-status').textContent = '● live';
+    document.getElementById('ws-status').className = 'ws-status ws-live';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-status').textContent = '● reconnecting';
+    document.getElementById('ws-status').className = 'ws-status ws-off';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onmessage = (e) => {
+    try { render(JSON.parse(e.data)); } catch(err) {}
+  };
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString();
+}
+
+function render(data) {
+  // Stats
+  const s = data.stats || {};
+  document.getElementById('stat-ingested').textContent = (s.events_ingested || 0).toLocaleString();
+  document.getElementById('stat-eps').textContent = (s.events_per_second || 0).toFixed(1);
+  document.getElementById('stat-anomalies').textContent = (s.anomalies_detected || 0).toLocaleString();
+  document.getElementById('stat-lag').textContent = (s.processor_lag_ms || 0) + 'ms';
+
+  // EPS chart
+  epsHistory.push(s.events_per_second || 0);
+  if (epsHistory.length > 60) epsHistory.shift();
+  drawEpsChart();
+
+  // Windows
+  const windows = data.windows || [];
+  if (data.database) {
+    document.getElementById('stat-sensors').textContent = data.database.active_sensors || 0;
+  }
+
+  const wbody = document.getElementById('windows-body');
+  if (windows.length === 0) {
+    wbody.innerHTML = '<tr><td colspan="6" style="color:#64748b;text-align:center">Aggregating...</td></tr>';
+  } else {
+    wbody.innerHTML = windows.slice(0, 8).map(w => `
+      <tr>
+        <td>${w.sensor_type}</td>
+        <td>${w.location}</td>
+        <td>${(w.avg || 0).toFixed(2)}</td>
+        <td>${(w.min || 0).toFixed(2)}</td>
+        <td>${(w.max || 0).toFixed(2)}</td>
+        <td>${(w.p99 || 0).toFixed(2)}</td>
+      </tr>`).join('');
+  }
+
+  // Anomalies
+  const anomalies = data.anomalies || [];
+  const abody = document.getElementById('anomalies-body');
+  if (anomalies.length === 0) {
+    abody.innerHTML = '<tr><td colspan="7" style="color:#64748b;text-align:center">No anomalies detected</td></tr>';
+  } else {
+    abody.innerHTML = anomalies.map(a => `
+      <tr>
+        <td style="font-family:monospace">${a.sensor_id}</td>
+        <td>${a.sensor_type}</td>
+        <td style="color:#f87171;font-weight:600">${(a.value || 0).toFixed(2)}</td>
+        <td>${(a.expected || 0).toFixed(2)}</td>
+        <td>${(a.z_score || 0).toFixed(1)}σ</td>
+        <td><span class="badge badge-${a.severity}">${a.severity}</span></td>
+        <td>${fmtTime(a.detected_at)}</td>
+      </tr>`).join('');
+  }
+
+  // Events
+  const events = data.events || [];
+  const ebody = document.getElementById('events-body');
+  if (events.length === 0) {
+    ebody.innerHTML = '<tr><td colspan="6" style="color:#64748b;text-align:center">Waiting for events...</td></tr>';
+  } else {
+    ebody.innerHTML = events.map(e => `
+      <tr>
+        <td style="font-family:monospace">${e.sensor_id}</td>
+        <td>${e.sensor_type}</td>
+        <td>${e.location}</td>
+        <td>${(e.value || 0).toFixed(3)}</td>
+        <td>${e.unit}</td>
+        <td>${fmtTime(e.timestamp)}</td>
+      </tr>`).join('');
+  }
+}
+
+function drawEpsChart() {
+  const pts = epsHistory;
+  if (pts.length < 2) return;
+  const W = 400, H = 120, PAD = 5;
+  const max = Math.max(...pts) || 1;
+  const coords = pts.map((v, i) => {
+    const x = PAD + (i / (pts.length - 1)) * (W - 2 * PAD);
+    const y = H - PAD - (v / max) * (H - 2 * PAD);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  document.getElementById('eps-line').setAttribute('points', coords);
+}
+
+connect();
+</script>
+</body>
+</html>

@@ -17,7 +17,7 @@ import (
 type Processor struct {
 	store    *store.Store
 	windows  *WindowAggregator
-	anomaly  *AnomalyDetector
+	anomaly  *LayeredDetector
 	broker   string
 	topic    string
 	log      *zap.Logger
@@ -31,7 +31,7 @@ func New(s *store.Store, broker, topic string, log *zap.Logger) *Processor {
 	return &Processor{
 		store:   s,
 		windows: NewWindowAggregator(),
-		anomaly: NewAnomalyDetector(),
+		anomaly: NewLayeredDetector(),
 		broker:  broker,
 		topic:   topic,
 		log:     log,

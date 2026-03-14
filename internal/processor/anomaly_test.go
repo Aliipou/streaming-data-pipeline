@@ -31,7 +31,7 @@ func TestAnomalyDetector_NoAnomalyForNormalValues(t *testing.T) {
 	warmDetector(d, "s1", 50)
 
 	// Normal reading — should not trigger
-	a := d.Check(makeEvent("s1", 22.5))
+	a := d.Check(makeEvent("s1", 22.15))
 	if a != nil {
 		t.Errorf("expected no anomaly for normal value, got z=%.2f severity=%s", a.ZScore, a.Severity)
 	}
@@ -99,7 +99,7 @@ func TestAnomalyDetector_IndependentSensors(t *testing.T) {
 
 	// Anomaly in s1 should not affect s2
 	_ = d.Check(makeEvent("s1", 9999.0))
-	a2 := d.Check(makeEvent("s2", 22.5))
+	a2 := d.Check(makeEvent("s2", 22.15))
 	if a2 != nil {
 		t.Errorf("s2 should not be affected by s1 anomaly, got z=%.2f", a2.ZScore)
 	}

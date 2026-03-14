@@ -23,7 +23,7 @@ func (s *sensorStats) update(x float64) {
 }
 
 func (s *sensorStats) stddev() float64 {
-	if s.count < 2 {
+	if s.count < 2 || s.m2 == 0 {
 		return 1.0
 	}
 	return math.Sqrt(s.m2 / float64(s.count-1))
@@ -143,13 +143,20 @@ func (e *EWMADetector) Check(event models.SensorEvent) *models.Anomaly {
 	}
 
 	prevMean := st.mean
+	prevVariance := st.variance
 	st.update(event.Value)
 
 	if st.count < ewmaWarmup {
 		return nil
 	}
 
-	deviation := math.Abs(event.Value-prevMean) / st.std()
+	var prevStd float64
+	if prevVariance <= 0 {
+		prevStd = 1.0
+	} else {
+		prevStd = math.Sqrt(prevVariance)
+	}
+	deviation := math.Abs(event.Value-prevMean) / prevStd
 	if deviation <= 3.0 {
 		return nil
 	}

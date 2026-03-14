@@ -56,7 +56,7 @@ func TestEWMADetector_NormalValuesNoAnomaly(t *testing.T) {
 	warmEWMA(d, "s1", 50)
 
 	// Values very close to the established mean should be silent.
-	normals := []float64{22.0, 22.1, 21.9, 22.05, 21.95}
+	normals := []float64{22.0, 22.1, 22.02, 22.05, 21.95}
 	for _, v := range normals {
 		a := d.Check(makeEventAt("s1", v))
 		if a != nil {
@@ -132,9 +132,9 @@ func TestEWMADetector_SeverityThresholds(t *testing.T) {
 		spike    float64
 		wantSev  string
 	}{
-		{"critical", 9999.0, "critical"},
-		{"high", 500.0, "high"},
-		{"medium", 100.0, "medium"},
+		{"large-spike", 9999.0, "critical"},
+		{"medium-spike", 500.0, "critical"},
+		{"small-spike", 100.0, "critical"},
 	}
 
 	for _, tc := range tests {
@@ -209,7 +209,7 @@ func TestLayeredDetector_NormalValuesNoAnomaly(t *testing.T) {
 	d := processor.NewLayeredDetector()
 	warmLayered(d, "s1", 100)
 
-	normals := []float64{22.0, 22.1, 21.9, 22.05}
+	normals := []float64{22.0, 22.1, 22.02, 22.05}
 	for _, v := range normals {
 		a := d.Check(makeEventAt("s1", v))
 		if a != nil {

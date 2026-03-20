@@ -69,15 +69,18 @@ func (h *Hub) broadcast(ctx context.Context) {
 	events, _ := h.store.GetRecentEvents(ctx, 5, "", "")
 	windows := h.processor.GetWindows()
 
-	update := map[string]interface{}{
-		"stats":     stats,
-		"anomalies": anomalies,
-		"events":    events,
-		"windows":   windows,
-		"ts":        time.Now(),
+	msg := wsUpdate{
+		Type: "pipeline_update",
+		Data: map[string]interface{}{
+			"stats":     stats,
+			"anomalies": anomalies,
+			"events":    events,
+			"windows":   windows,
+			"ts":        time.Now(),
+		},
 	}
 
-	data, err := json.Marshal(update)
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}

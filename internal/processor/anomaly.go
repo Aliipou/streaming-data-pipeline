@@ -143,19 +143,13 @@ func (e *EWMADetector) Check(event models.SensorEvent) *models.Anomaly {
 	}
 
 	prevMean := st.mean
-	prevVariance := st.variance
+	prevStd := st.std() // capture std before updating state
 	st.update(event.Value)
 
 	if st.count < ewmaWarmup {
 		return nil
 	}
 
-	var prevStd float64
-	if prevVariance <= 0 {
-		prevStd = 1.0
-	} else {
-		prevStd = math.Sqrt(prevVariance)
-	}
 	deviation := math.Abs(event.Value-prevMean) / prevStd
 	if deviation <= 3.0 {
 		return nil

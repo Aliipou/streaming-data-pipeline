@@ -87,7 +87,7 @@ func TestSensorEvent_NoTags(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if decoded.Tags != nil && len(decoded.Tags) > 0 {
+	if len(decoded.Tags) > 0 {
 		t.Errorf("expected nil/empty tags, got %v", decoded.Tags)
 	}
 }

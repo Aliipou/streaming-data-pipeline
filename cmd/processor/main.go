@@ -35,7 +35,7 @@ func main() {
 		log.Fatal("migrate", zap.Error(err))
 	}
 
-	p := processor.New(s, cfg.KafkaBrokers, cfg.KafkaTopic, log)
+	p := processor.New(s, cfg.KafkaBrokers, cfg.KafkaTopic, log, cfg.ZScoreThreshold, cfg.EWMAAlpha, cfg.EWMAThreshold)
 	log.Info("starting stream processor", zap.String("broker", cfg.KafkaBrokers), zap.String("topic", cfg.KafkaTopic))
 	p.Run(ctx)
 }

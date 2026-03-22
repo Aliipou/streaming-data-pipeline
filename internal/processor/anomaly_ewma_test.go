@@ -40,7 +40,7 @@ func warmLayered(d *processor.LayeredDetector, sensorID string, n int) {
 // TestEWMADetector_WarmupPeriod verifies that no anomaly is returned for the
 // first 20 readings, even when every value is an extreme spike.
 func TestEWMADetector_WarmupPeriod(t *testing.T) {
-	d := processor.NewEWMADetector()
+	d := processor.NewEWMADetector(0.1, 3.0)
 	for i := 0; i < 20; i++ {
 		a := d.Check(makeEventAt("s1", 99999.0))
 		if a != nil {
@@ -52,7 +52,7 @@ func TestEWMADetector_WarmupPeriod(t *testing.T) {
 // TestEWMADetector_NormalValuesNoAnomaly verifies that steady-state readings
 // around the established baseline do not trigger detection.
 func TestEWMADetector_NormalValuesNoAnomaly(t *testing.T) {
-	d := processor.NewEWMADetector()
+	d := processor.NewEWMADetector(0.1, 3.0)
 	warmEWMA(d, "s1", 50)
 
 	// Values very close to the established mean should be silent.
@@ -84,7 +84,7 @@ func TestEWMADetector_SpikeTriggersDetection(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d := processor.NewEWMADetector()
+			d := processor.NewEWMADetector(0.1, 3.0)
 			warmEWMA(d, "sensor", 100) // well past warmup
 
 			a := d.Check(makeEventAt("sensor", tc.spike))
@@ -139,7 +139,7 @@ func TestEWMADetector_SeverityThresholds(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d := processor.NewEWMADetector()
+			d := processor.NewEWMADetector(0.1, 3.0)
 			// Use perfectly constant warmup to minimise variance.
 			for i := 0; i < 100; i++ {
 				d.Check(makeEventAt("s", 20.0))
@@ -158,7 +158,7 @@ func TestEWMADetector_SeverityThresholds(t *testing.T) {
 
 // TestEWMADetector_IndependentSensors confirms per-sensor isolation.
 func TestEWMADetector_IndependentSensors(t *testing.T) {
-	d := processor.NewEWMADetector()
+	d := processor.NewEWMADetector(0.1, 3.0)
 	warmEWMA(d, "s1", 50)
 	warmEWMA(d, "s2", 50)
 
@@ -178,7 +178,7 @@ func TestEWMADetector_IndependentSensors(t *testing.T) {
 func TestLayeredDetector_EscalatesWhenBothAgree(t *testing.T) {
 	severityRank := map[string]int{"low": 1, "medium": 2, "high": 3, "critical": 4}
 
-	d := processor.NewLayeredDetector()
+	d := processor.NewLayeredDetector(2.0, 0.1, 3.0)
 	// Use enough readings to satisfy both detectors' warmup periods (≥20 for
 	// EWMA, ≥10 for Welford) and build a tight baseline.
 	for i := 0; i < 100; i++ {
@@ -206,7 +206,7 @@ func TestLayeredDetector_EscalatesWhenBothAgree(t *testing.T) {
 
 // TestLayeredDetector_NormalValuesNoAnomaly confirms silence for normal data.
 func TestLayeredDetector_NormalValuesNoAnomaly(t *testing.T) {
-	d := processor.NewLayeredDetector()
+	d := processor.NewLayeredDetector(2.0, 0.1, 3.0)
 	warmLayered(d, "s1", 100)
 
 	normals := []float64{22.0, 22.1, 22.02, 22.05}
@@ -221,7 +221,7 @@ func TestLayeredDetector_NormalValuesNoAnomaly(t *testing.T) {
 // TestLayeredDetector_WarmupSilent checks that the layered detector is silent
 // during the warmup window of its sub-detectors.
 func TestLayeredDetector_WarmupSilent(t *testing.T) {
-	d := processor.NewLayeredDetector()
+	d := processor.NewLayeredDetector(2.0, 0.1, 3.0)
 	// Both sub-detectors require a minimum number of observations; feed fewer
 	// than the strictest (EWMA = 20) to ensure neither fires.
 	for i := 0; i < 19; i++ {
@@ -239,7 +239,7 @@ func TestLayeredDetector_OnlyOneDetects(t *testing.T) {
 	// without white-box access, so this test acts as a smoke-test: after a
 	// moderate anomaly the layered detector must return a non-nil result with a
 	// valid severity.
-	d := processor.NewLayeredDetector()
+	d := processor.NewLayeredDetector(2.0, 0.1, 3.0)
 	for i := 0; i < 100; i++ {
 		d.Check(makeEventAt("s1", 20.0))
 	}

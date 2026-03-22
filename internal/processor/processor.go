@@ -15,26 +15,28 @@ import (
 
 // Processor reads from Kafka, runs window aggregation and anomaly detection.
 type Processor struct {
-	store    *store.Store
-	windows  *WindowAggregator
-	anomaly  *LayeredDetector
-	broker   string
-	topic    string
-	log      *zap.Logger
-	ingested atomic.Int64
-	detected atomic.Int64
-	lag      atomic.Int64
+	store     *store.Store
+	windows   *WindowAggregator
+	anomaly   *LayeredDetector
+	broker    string
+	topic     string
+	log       *zap.Logger
+	ingested  atomic.Int64
+	detected  atomic.Int64
+	lag       atomic.Int64
+	startTime time.Time
 }
 
 // New creates a Processor connected to the given store and Kafka config.
-func New(s *store.Store, broker, topic string, log *zap.Logger) *Processor {
+func New(s *store.Store, broker, topic string, log *zap.Logger, zScoreThreshold, ewmaAlpha, ewmaThreshold float64) *Processor {
 	return &Processor{
-		store:   s,
-		windows: NewWindowAggregator(),
-		anomaly: NewLayeredDetector(),
-		broker:  broker,
-		topic:   topic,
-		log:     log,
+		store:     s,
+		windows:   NewWindowAggregator(),
+		anomaly:   NewLayeredDetector(zScoreThreshold, ewmaAlpha, ewmaThreshold),
+		broker:    broker,
+		topic:     topic,
+		log:       log,
+		startTime: time.Now(),
 	}
 }
 
@@ -116,9 +118,14 @@ func (p *Processor) processMessage(ctx context.Context, data []byte) error {
 // GetStats returns current pipeline statistics.
 func (p *Processor) GetStats() models.PipelineStats {
 	ingested := p.ingested.Load()
+	elapsed := time.Since(p.startTime).Seconds()
+	var eps float64
+	if elapsed > 0 {
+		eps = float64(ingested) / elapsed
+	}
 	return models.PipelineStats{
 		EventsIngested:    ingested,
-		EventsPerSecond:   float64(ingested) / time.Since(time.Now()).Abs().Seconds(),
+		EventsPerSecond:   eps,
 		AnomaliesDetected: p.detected.Load(),
 		ProcessorLag:      p.lag.Load(),
 	}

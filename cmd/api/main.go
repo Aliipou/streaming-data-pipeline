@@ -38,7 +38,7 @@ func main() {
 	// The API server connects to Kafka read-only to get processor stats via a
 	// shared processor that is driven by the processor binary.
 	// Here we spin up a local read-only processor for stats only.
-	p := processor.New(s, cfg.KafkaBrokers, cfg.KafkaTopic, log)
+	p := processor.New(s, cfg.KafkaBrokers, cfg.KafkaTopic, log, cfg.ZScoreThreshold, cfg.EWMAAlpha, cfg.EWMAThreshold)
 	go p.Run(ctx)
 
 	hub := api.NewHub(s, p, log)

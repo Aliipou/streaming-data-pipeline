@@ -31,16 +31,17 @@ func (s *sensorStats) stddev() float64 {
 
 // AnomalyDetector uses Welford's online Z-score algorithm per sensor.
 type AnomalyDetector struct {
-	mu    sync.Mutex
-	stats map[string]*sensorStats
+	mu        sync.Mutex
+	stats     map[string]*sensorStats
+	threshold float64
 }
 
-// NewAnomalyDetector creates a new detector.
-func NewAnomalyDetector() *AnomalyDetector {
-	return &AnomalyDetector{stats: make(map[string]*sensorStats)}
+// NewAnomalyDetector creates a new detector with the given z-score threshold.
+func NewAnomalyDetector(threshold float64) *AnomalyDetector {
+	return &AnomalyDetector{stats: make(map[string]*sensorStats), threshold: threshold}
 }
 
-// Check updates rolling stats and returns an Anomaly if Z-score exceeds 2.
+// Check updates rolling stats and returns an Anomaly if Z-score exceeds the threshold.
 func (a *AnomalyDetector) Check(event models.SensorEvent) *models.Anomaly {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -56,7 +57,7 @@ func (a *AnomalyDetector) Check(event models.SensorEvent) *models.Anomaly {
 	stddev := s.stddev()
 
 	zScore := math.Abs(event.Value-expected) / stddev
-	if s.count < 10 || zScore < 2.0 {
+	if s.count < 10 || zScore < a.threshold {
 		return nil
 	}
 
@@ -88,8 +89,7 @@ func zScoreSeverity(z float64) string {
 
 // ── EWMA detector ────────────────────────────────────────────────────────────
 
-const ewmaAlpha = 0.1 // slow-moving baseline; 0 < alpha < 1
-const ewmaWarmup = 20  // minimum readings before detection is active
+const ewmaWarmup = 20 // minimum readings before detection is active
 
 // ewmaState holds the exponentially-weighted mean and variance for one sensor.
 type ewmaState struct {
@@ -99,7 +99,7 @@ type ewmaState struct {
 }
 
 // update applies one new observation using Welford-style EWMA update.
-func (e *ewmaState) update(x float64) {
+func (e *ewmaState) update(x float64, alpha float64) {
 	e.count++
 	if e.count == 1 {
 		e.mean = x
@@ -107,8 +107,8 @@ func (e *ewmaState) update(x float64) {
 		return
 	}
 	diff := x - e.mean
-	e.mean += ewmaAlpha * diff
-	e.variance = (1 - ewmaAlpha) * (e.variance + ewmaAlpha*diff*diff)
+	e.mean += alpha * diff
+	e.variance = (1 - alpha) * (e.variance + alpha*diff*diff)
 }
 
 func (e *ewmaState) std() float64 {
@@ -119,19 +119,21 @@ func (e *ewmaState) std() float64 {
 }
 
 // EWMADetector detects anomalies using an exponentially-weighted moving average
-// baseline per sensor (alpha=0.1 for a slow-adapting reference signal).
+// baseline per sensor with a configurable alpha and deviation threshold.
 type EWMADetector struct {
-	mu     sync.Mutex
-	states map[string]*ewmaState
+	mu        sync.Mutex
+	states    map[string]*ewmaState
+	alpha     float64
+	threshold float64
 }
 
-// NewEWMADetector creates a new EWMADetector.
-func NewEWMADetector() *EWMADetector {
-	return &EWMADetector{states: make(map[string]*ewmaState)}
+// NewEWMADetector creates a new EWMADetector with the given alpha and threshold.
+func NewEWMADetector(alpha, threshold float64) *EWMADetector {
+	return &EWMADetector{states: make(map[string]*ewmaState), alpha: alpha, threshold: threshold}
 }
 
 // Check updates the EWMA state and returns an Anomaly when the deviation score
-// exceeds 3.0 and at least ewmaWarmup readings have been seen for that sensor.
+// exceeds the configured threshold and at least ewmaWarmup readings have been seen.
 func (e *EWMADetector) Check(event models.SensorEvent) *models.Anomaly {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -144,14 +146,14 @@ func (e *EWMADetector) Check(event models.SensorEvent) *models.Anomaly {
 
 	prevMean := st.mean
 	prevStd := st.std() // capture std before updating state
-	st.update(event.Value)
+	st.update(event.Value, e.alpha)
 
 	if st.count < ewmaWarmup {
 		return nil
 	}
 
 	deviation := math.Abs(event.Value-prevMean) / prevStd
-	if deviation <= 3.0 {
+	if deviation <= e.threshold {
 		return nil
 	}
 
@@ -221,11 +223,13 @@ type LayeredDetector struct {
 	ewma    *EWMADetector
 }
 
-// NewLayeredDetector creates a LayeredDetector with fresh sub-detectors.
-func NewLayeredDetector() *LayeredDetector {
+// NewLayeredDetector creates a LayeredDetector with the given thresholds.
+// zScoreThreshold controls the Welford detector, ewmaAlpha and ewmaThreshold
+// control the EWMA detector.
+func NewLayeredDetector(zScoreThreshold, ewmaAlpha, ewmaThreshold float64) *LayeredDetector {
 	return &LayeredDetector{
-		welford: NewAnomalyDetector(),
-		ewma:    NewEWMADetector(),
+		welford: NewAnomalyDetector(zScoreThreshold),
+		ewma:    NewEWMADetector(ewmaAlpha, ewmaThreshold),
 	}
 }
 

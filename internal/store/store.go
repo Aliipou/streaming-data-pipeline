@@ -2,15 +2,18 @@ package store
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/aliipou/streaming-data-pipeline/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed migrations/001_init.sql
+var migrationSQL string
 
 const anomalyRingSize = 1000
 
@@ -40,14 +43,15 @@ func New(ctx context.Context, pgURL string) (*Store, error) {
 	return s, nil
 }
 
-// Migrate runs the SQL migration file.
+// Migrate runs the embedded SQL migration.
 func (s *Store) Migrate(ctx context.Context) error {
-	sql, err := os.ReadFile("internal/store/migrations/001_init.sql")
-	if err != nil {
-		return fmt.Errorf("read migration: %w", err)
-	}
-	_, err = s.pool.Exec(ctx, string(sql))
+	_, err := s.pool.Exec(ctx, migrationSQL)
 	return err
+}
+
+// Ping checks connectivity to the database.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.pool.Ping(ctx)
 }
 
 // Close shuts down the connection pool.

@@ -27,7 +27,7 @@ func warmDetector(d *processor.AnomalyDetector, sensorID string, n int) {
 }
 
 func TestAnomalyDetector_NoAnomalyForNormalValues(t *testing.T) {
-	d := processor.NewAnomalyDetector()
+	d := processor.NewAnomalyDetector(2.0)
 	warmDetector(d, "s1", 50)
 
 	// Normal reading — should not trigger
@@ -38,7 +38,7 @@ func TestAnomalyDetector_NoAnomalyForNormalValues(t *testing.T) {
 }
 
 func TestAnomalyDetector_DetectsAnomaly(t *testing.T) {
-	d := processor.NewAnomalyDetector()
+	d := processor.NewAnomalyDetector(2.0)
 	warmDetector(d, "s1", 50)
 
 	// Extreme spike — should trigger
@@ -66,7 +66,7 @@ func TestAnomalyDetector_SeverityTiers(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		d := processor.NewAnomalyDetector()
+		d := processor.NewAnomalyDetector(2.0)
 		warmDetector(d, "sensor", 100)
 		a := d.Check(makeEvent("sensor", tc.value))
 		if a == nil {
@@ -82,7 +82,7 @@ func TestAnomalyDetector_SeverityTiers(t *testing.T) {
 }
 
 func TestAnomalyDetector_WarmupPeriod(t *testing.T) {
-	d := processor.NewAnomalyDetector()
+	d := processor.NewAnomalyDetector(2.0)
 	// Less than 10 readings — should never fire even for extreme values
 	for i := 0; i < 9; i++ {
 		a := d.Check(makeEvent("s1", 9999.0))
@@ -93,7 +93,7 @@ func TestAnomalyDetector_WarmupPeriod(t *testing.T) {
 }
 
 func TestAnomalyDetector_IndependentSensors(t *testing.T) {
-	d := processor.NewAnomalyDetector()
+	d := processor.NewAnomalyDetector(2.0)
 	warmDetector(d, "s1", 50)
 	warmDetector(d, "s2", 50)
 
@@ -106,7 +106,7 @@ func TestAnomalyDetector_IndependentSensors(t *testing.T) {
 }
 
 func TestAnomalyDetector_AnomalyFields(t *testing.T) {
-	d := processor.NewAnomalyDetector()
+	d := processor.NewAnomalyDetector(2.0)
 	warmDetector(d, "sensor-1", 50)
 
 	event := makeEvent("sensor-1", 9999.0)

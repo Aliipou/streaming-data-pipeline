@@ -12,27 +12,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check . --select E,F --ignore E501,E402,F401,F841 || true
+          go-version: "1.23"
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
 
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
-      - name: Install dependencies
-        run: |
-          pip install pytest pytest-cov
-          pip install -r requirements.txt 2>/dev/null || true
+          go-version: "1.23"
       - name: Run tests
-        run: pytest tests/ -v --cov --cov-report=xml 2>/dev/null || echo "No tests found - OK"
-      - uses: codecov/codecov-action@v4
-        with:
-          file: coverage.xml
-        continue-on-error: true
+        run: go test -race ./...

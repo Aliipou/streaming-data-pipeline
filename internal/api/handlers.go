@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,6 +28,10 @@ func New(s *store.Store, p *processor.Processor, hub *Hub, log *zap.Logger) *Han
 
 // RegisterRoutes attaches all routes.
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
+	// Health check endpoints
+	r.GET("/healthz", h.Healthz)
+	r.GET("/readyz", h.Readyz)
+
 	v1 := r.Group("/api/v1")
 	{
 		v1.GET("/events", h.GetEvents)
@@ -38,6 +43,23 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/ws", h.hub.ServeWS)
 	r.Static("/web", "./web")
 	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/web/index.html") })
+}
+
+// Healthz is a liveness probe. Returns 200 if the process is running.
+func (h *Handler) Healthz(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// Readyz is a readiness probe. Returns 200 only when the database is reachable.
+func (h *Handler) Readyz(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+	if err := h.store.Ping(ctx); err != nil {
+		h.log.Warn("readyz check failed", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ready"})
 }
 
 func (h *Handler) GetEvents(c *gin.Context) {

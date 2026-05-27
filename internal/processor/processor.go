@@ -25,11 +25,12 @@ type Processor struct {
 	detected  atomic.Int64
 	lag       atomic.Int64
 	startTime time.Time
+	statePath string
 }
 
 // New creates a Processor connected to the given store and Kafka config.
 func New(s *store.Store, broker, topic string, log *zap.Logger, zScoreThreshold, ewmaAlpha, ewmaThreshold float64) *Processor {
-	return &Processor{
+	p := &Processor{
 		store:     s,
 		windows:   NewWindowAggregator(),
 		anomaly:   NewLayeredDetector(zScoreThreshold, ewmaAlpha, ewmaThreshold),
@@ -37,7 +38,14 @@ func New(s *store.Store, broker, topic string, log *zap.Logger, zScoreThreshold,
 		topic:     topic,
 		log:       log,
 		startTime: time.Now(),
+		statePath: "/var/lib/processor/detector_state.json",
 	}
+
+	// Attempt to restore persisted detector state from a previous run.
+	if err := p.anomaly.RestoreState(p.statePath); err != nil {
+		log.Info("no prior detector state to restore", zap.Error(err))
+	}
+	return p
 }
 
 // Run consumes from Kafka until ctx is cancelled.
@@ -54,7 +62,7 @@ func (p *Processor) Run(ctx context.Context) {
 
 	p.log.Info("stream processor started", zap.String("topic", p.topic))
 
-	// Prune old windows every 5 minutes
+	// Prune old windows every 5 minutes.
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -64,6 +72,27 @@ func (p *Processor) Run(ctx context.Context) {
 				return
 			case <-ticker.C:
 				p.windows.Prune(60)
+			}
+		}
+	}()
+
+	// Persist detector state to disk every 60 seconds so that a restart
+	// does not lose the Welford/EWMA baselines built up at runtime.
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				// Final snapshot on clean shutdown.
+				if err := p.anomaly.PersistState(p.statePath); err != nil {
+					p.log.Warn("persist detector state on shutdown", zap.Error(err))
+				}
+				return
+			case <-ticker.C:
+				if err := p.anomaly.PersistState(p.statePath); err != nil {
+					p.log.Warn("persist detector state", zap.Error(err))
+				}
 			}
 		}
 	}()
@@ -79,11 +108,18 @@ func (p *Processor) Run(ctx context.Context) {
 		}
 
 		start := time.Now()
-		if err := p.processMessage(ctx, msg.Value); err != nil {
-			p.log.Error("process message", zap.Error(err))
-		}
+		processErr := p.processMessage(ctx, msg.Topic, msg.Partition, msg.Offset, msg.Value)
 		p.lag.Store(time.Since(start).Milliseconds())
 
+		if processErr != nil {
+			// Do NOT advance the Kafka offset when the DB write failed; the
+			// message will be redelivered and retried after a restart.
+			p.log.Error("process message", zap.Error(processErr))
+			continue
+		}
+
+		// Only commit the offset once the event has been durably written to
+		// PostgreSQL, preventing silent data loss when the DB is unavailable.
 		if err := reader.CommitMessages(ctx, msg); err != nil && ctx.Err() == nil {
 			p.log.Warn("commit message", zap.Error(err))
 		}
@@ -91,7 +127,7 @@ func (p *Processor) Run(ctx context.Context) {
 	p.log.Info("stream processor stopped")
 }
 
-func (p *Processor) processMessage(ctx context.Context, data []byte) error {
+func (p *Processor) processMessage(ctx context.Context, topic string, partition int, offset int64, data []byte) error {
 	var event models.SensorEvent
 	if err := json.Unmarshal(data, &event); err != nil {
 		return err
@@ -112,7 +148,7 @@ func (p *Processor) processMessage(ctx context.Context, data []byte) error {
 		)
 	}
 
-	return p.store.SaveEvent(ctx, event)
+	return p.store.SaveEvent(ctx, event, topic, partition, offset)
 }
 
 // GetStats returns current pipeline statistics.

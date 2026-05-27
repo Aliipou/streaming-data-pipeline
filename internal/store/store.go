@@ -13,7 +13,10 @@ import (
 )
 
 //go:embed migrations/001_init.sql
-var migrationSQL string
+var migration001SQL string
+
+//go:embed migrations/002_idempotency.sql
+var migration002SQL string
 
 const anomalyRingSize = 1000
 
@@ -43,10 +46,14 @@ func New(ctx context.Context, pgURL string) (*Store, error) {
 	return s, nil
 }
 
-// Migrate runs the embedded SQL migration.
+// Migrate runs all embedded SQL migrations in order.
 func (s *Store) Migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, migrationSQL)
-	return err
+	for _, sql := range []string{migration001SQL, migration002SQL} {
+		if _, err := s.pool.Exec(ctx, sql); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Ping checks connectivity to the database.
@@ -60,21 +67,23 @@ func (s *Store) Close() {
 }
 
 // SaveEvent persists a sensor event to PostgreSQL.
-func (s *Store) SaveEvent(ctx context.Context, event models.SensorEvent) error {
+// The Kafka topic, partition, and offset are stored to enforce idempotency:
+// a duplicate delivery (same topic+partition+offset) is silently ignored via
+// the unique index added in migration 002.
+func (s *Store) SaveEvent(ctx context.Context, event models.SensorEvent, kafkaTopic string, kafkaPartition int, kafkaOffset int64) error {
 	tagsJSON, _ := json.Marshal(event.Tags)
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO sensor_events (sensor_id, sensor_type, location, value, unit, tags, recorded_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		,
 		event.SensorID, string(event.SensorType), event.Location,
 		event.Value, event.Unit, tagsJSON, event.Timestamp,
+		kafkaTopic, kafkaPartition, kafkaOffset,
 	)
 	return err
 }
 
 // GetRecentEvents returns the latest sensor events with optional filters.
 func (s *Store) GetRecentEvents(ctx context.Context, limit int, sensorType, location string) ([]models.SensorEvent, error) {
-	query := `SELECT sensor_id, sensor_type, location, value, unit, tags, recorded_at
-	          FROM sensor_events WHERE 1=1`
+	query := 
 	args := []interface{}{}
 	idx := 1
 
@@ -120,8 +129,7 @@ func (s *Store) GetRecentEvents(ctx context.Context, limit int, sensorType, loca
 // SaveAnomaly persists an anomaly to PostgreSQL and caches it in-memory.
 func (s *Store) SaveAnomaly(ctx context.Context, a models.Anomaly) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO anomalies (sensor_id, sensor_type, location, value, expected, z_score, severity, detected_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		,
 		a.SensorID, string(a.SensorType), a.Location, a.Value, a.Expected, a.ZScore, a.Severity, a.DetectedAt,
 	)
 	if err != nil {
@@ -158,14 +166,14 @@ func (s *Store) GetStats(ctx context.Context) (map[string]int64, error) {
 	stats := make(map[string]int64)
 
 	var totalEvents int64
-	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM sensor_events`).Scan(&totalEvents)
+	err := s.pool.QueryRow(ctx, ).Scan(&totalEvents)
 	if err != nil {
 		return nil, err
 	}
 	stats["total_events"] = totalEvents
 
 	var totalAnomalies int64
-	err = s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM anomalies`).Scan(&totalAnomalies)
+	err = s.pool.QueryRow(ctx, ).Scan(&totalAnomalies)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +181,7 @@ func (s *Store) GetStats(ctx context.Context) (map[string]int64, error) {
 
 	var activeSensors int64
 	err = s.pool.QueryRow(ctx,
-		`SELECT COUNT(DISTINCT sensor_id) FROM sensor_events WHERE recorded_at > $1`,
+		,
 		time.Now().Add(-5*time.Minute),
 	).Scan(&activeSensors)
 	if err != nil {

@@ -1,3 +1,5 @@
+**Live (graph):** [https://ali-streaming-data-pipeline.vercel.app](https://ali-streaming-data-pipeline.vercel.app)
+
 <div align="center">
 
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://golang.org)
